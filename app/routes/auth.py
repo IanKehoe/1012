@@ -74,7 +74,11 @@ async def login_user(request: Request, username: str = Form(...), password: str 
 
 @router.get("/main", response_class=HTMLResponse)
 async def get_main(request: Request, current_user: User = Depends(get_current_user)):
-    return templates.TemplateResponse("main.html", {"request": request, "user": current_user})
+    if isinstance(current_user, RedirectResponse):
+        return current_user
+    response = templates.TemplateResponse("main.html", {"request": request, "user": current_user})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 @router.post("/logout", response_class=HTMLResponse)
 async def logout_user(request: Request):

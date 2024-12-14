@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Main Page</title>
+</head>
+<body>
+    <h1>Welcome, {{ user.first_name }} {{ user.last_name }}</h1>
+    <p>Your email: {{ user.email }}</p>
+    <form action="/auth/logout" method="post">
+        <button type="submit">Logout</button>
+    </form>
+</body>
+</html>

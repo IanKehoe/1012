@@ -1,36 +1,45 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.schemas import UserCreate, UserResponse, UserLogin, Token
-from app.models.user import User
+from app.models.user import User, AccountStatus
 from app.core.database import get_db
 from app.utils import hash_password, verify_password, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 from datetime import timedelta
 import logging
+from fastapi.templating import Jinja2Templates
 
 router = APIRouter()
+templates = Jinja2Templates(directory="app/templates")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@router.post("/register", response_model=UserResponse)
-async def register_user(user: UserCreate, db: Session = Depends(get_db)):
-    logger.info(f"Register request data: {user}")
+@router.get("/register", response_class=HTMLResponse)
+async def get_register(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
+
+@router.post("/register", response_class=HTMLResponse)
+async def register_user(request: Request, email: str = Form(...), password: str = Form(...), first_name: str = Form(None), last_name: str = Form(None), db: Session = Depends(get_db)):
+    logger.info(f"Register request data: {email}, {first_name}, {last_name}")
     # Check if the user already exists
-    db_user = db.query(User).filter(User.email == user.email).first()
+    db_user = db.query(User).filter(User.email == email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
     # Hash the password
-    hashed_password = hash_password(user.password)
+    hashed_password = hash_password(password)
 
     # Create a new user instance
     new_user = User(
-        email=user.email,
+        email=email,
         hashed_password=hashed_password,
-        first_name=user.first_name,
-        last_name=user.last_name,
+        first_name=first_name or "",
+        last_name=last_name or "",
+        account_status=AccountStatus.standard,
+        type=0
     )
 
     # Add the new user to the database
@@ -38,16 +47,20 @@ async def register_user(user: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
-    return new_user
+    return RedirectResponse(url="/auth/login", status_code=303)
 
-@router.post("/login", response_model=Token)
-async def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    logger.info(f"Login request data: {form_data}")
-    db_user = db.query(User).filter(User.email == form_data.username).first()
+@router.get("/login", response_class=HTMLResponse)
+async def get_login(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@router.post("/login", response_class=HTMLResponse)
+async def login_user(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    logger.info(f"Login request data: {username}")
+    db_user = db.query(User).filter(User.email == username).first()
     if not db_user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    if not verify_password(form_data.password, db_user.hashed_password):
+    if not verify_password(password, db_user.hashed_password):
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -55,8 +68,16 @@ async def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Sessi
         data={"sub": db_user.email}, expires_delta=access_token_expires
     )
 
-    return {"access_token": access_token, "token_type": "bearer"}
+    response = RedirectResponse(url="/auth/main", status_code=303)
+    response.set_cookie(key="access_token", value=f"Bearer {access_token}", httponly=True)
+    return response
 
-@router.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
-    return current_user
+@router.get("/main", response_class=HTMLResponse)
+async def get_main(request: Request, current_user: User = Depends(get_current_user)):
+    return templates.TemplateResponse("main.html", {"request": request, "user": current_user})
+
+@router.post("/logout", response_class=HTMLResponse)
+async def logout_user(request: Request):
+    response = RedirectResponse(url="/auth/login", status_code=303)
+    response.delete_cookie("access_token")
+    return response
